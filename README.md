@@ -36,35 +36,7 @@ void execute_cgi(int client, const char *path, const char *method, const char *q
  int numchars = 1;
  int content_length = -1;
 
- //往 buf 中填东西以保证能进入下面的 while
- buf[0] = 'A'; buf[1] = '\0';
- //如果是 http 请求是 GET 方法的话读取并忽略请求剩下的内容
- if (strcasecmp(method, "GET") == 0)
-  while ((numchars > 0) && strcmp("\n", buf))  /* read & discard headers */
-   numchars = get_line(client, buf, sizeof(buf));
- else    /* POST */
- {
-  //只有 POST 方法才继续读内容
-  numchars = get_line(client, buf, sizeof(buf));
-  //这个循环的目的是读出指示 body 长度大小的参数，并记录 body 的长度大小。其余的 header 里面的参数一律忽略
-  //注意这里只读完 header 的内容，body 的内容没有读
-  while ((numchars > 0) && strcmp("\n", buf))
-  {
-   buf[15] = '\0';
-   if (strcasecmp(buf, "Content-Length:") == 0)
-    content_length = atoi(&(buf[16])); //记录 body 的长度大小
-   numchars = get_line(client, buf, sizeof(buf));
-  }
-
-  //如果 http 请求的 header 没有指示 body 长度大小的参数，则报错返回
-  if (content_length == -1) {
-   bad_request(client);
-   return;
-  }
- }
-
- sprintf(buf, "HTTP/1.0 200 OK\r\n");
- send(client, buf, strlen(buf), 0);
+ //省略若干行不相关代码
 
  //下面这里创建两个管道，用于两个进程间通信，参考《TLPI》44.2
  /*
@@ -190,5 +162,10 @@ void execute_cgi(int client, const char *path, const char *method, const char *q
  }
 }
 ```  
+这段代码很简单，创建了一个子进程用于执行CGI脚本。子进程将标准输入重定向到管道cgi_input的输入，接受来自父进程的写入；将标准输出重定向到cgi_output的输入，将信息发给父进程。子进程通过execl执行cgi脚本替换当前子进程。如下图：  
+![tinyhttpd_pipe](http://7xiub6.com1.z0.glb.clouddn.com/tinyhttpd_pipe.png)
 
+注意代码中，一个管道在两个通信进程会将一个管道不需要的一端关闭掉。子进程关闭了cgi_input[1](写端)和cgi_output[0](读端),父进程关闭了cgi_output[1](写端)和cgi_input[0]（读端）。
+
+通常都会使用一个管道的一个管道，创建了管道并fork进程后，管道读写都是双向开放的，但通常会去关闭不使用的文件描述符，如下图，父进程给子进程发送信息，就对应两个进程对管道做了相应关闭处理。
 ![pipe_fork](http://7xiub6.com1.z0.glb.clouddn.com/fork_pipe.png)

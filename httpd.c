@@ -12,11 +12,11 @@
  *  4) Uncomment the line that runs accept_request().
  *  5) Remove -lsocket from the Makefile.
  */
- 
+
  /*
      代码中除了用到 C 语言标准库的一些函数，也用到了一些与环境有关的函数(例如POSIX标准)
      具体可以参读《The Linux Programming Interface》，以下简称《TLPI》，页码指示均为英文版
-     
+
      注释者： github: cbsheng
  */
 #include <stdio.h>
@@ -91,9 +91,9 @@ void accept_request(int client)
 
  i = 0;
  //跳过所有的空白字符(空格)
- while (ISspace(buf[j]) && (j < sizeof(buf))) 
+ while (ISspace(buf[j]) && (j < sizeof(buf)))
   j++;
- 
+
  //然后把 URL 读出来放到 url 数组中
  while (!ISspace(buf[j]) && (i < sizeof(url) - 1) && (j < sizeof(buf)))
  {
@@ -107,11 +107,11 @@ void accept_request(int client)
  {
   //用一个指针指向 url
   query_string = url;
-  
+
   //去遍历这个 url，跳过字符 ？前面的所有字符，如果遍历完毕也没找到字符 ？则退出循环
   while ((*query_string != '?') && (*query_string != '\0'))
    query_string++;
-  
+
   //退出循环后检查当前的字符是 ？还是字符串(url)的结尾
   if (*query_string == '?')
   {
@@ -126,12 +126,16 @@ void accept_request(int client)
 
  //将前面分隔两份的前面那份字符串，拼接在字符串htdocs的后面之后就输出存储到数组 path 中。相当于现在 path 中存储着一个字符串
  sprintf(path, "htdocs%s", url);
- 
+
  //如果 path 数组中的这个字符串的最后一个字符是以字符 / 结尾的话，就拼接上一个"index.html"的字符串。首页的意思
  if (path[strlen(path) - 1] == '/')
   strcat(path, "index.html");
- 
- //在系统上去查询该文件是否存在
+
+ //在系统上去查询该文件是否存在, 《TLPI》15.1
+ /*
+ #include <sys/stat.h>
+ int stat(const char *pathname, struct stat *statbuf); //return 0 on succ, or -1 on err.
+ */
  if (stat(path, &st) == -1) {
   //如果不存在，那把这次 http 的请求后续的内容(head 和 body)全部读完并忽略
   while ((numchars > 0) && strcmp("\n", buf))  /* read & discard headers */
@@ -142,18 +146,25 @@ void accept_request(int client)
  else
  {
   //文件存在，那去跟常量S_IFMT相与，相与之后的值可以用来判断该文件是什么类型的
-  //S_IFMT参读《TLPI》P281，与下面的三个常量一样是包含在<sys/stat.h>
-  if ((st.st_mode & S_IFMT) == S_IFDIR)  
+  //st_mode: file type & file permission
+  //S_IFMT参读《TLPI》15.1，与下面的三个常量一样是包含在<sys/stat.h>
+  //stat。st_mode与S_IFMT相与可从该字段析取文件类型
+  /*
+  | _  _  _  _ | U  G  T  | R  W  X  | R  W  X | R  W  X  |
+  |            |          |<- user ->|<-group->|<-others->|
+  |<-filetype->|<-              permission               ->|
+  */
+  if ((st.st_mode & S_IFMT) == S_IFDIR)
    //如果这个文件是个目录，那就需要再在 path 后面拼接一个"/index.html"的字符串
    strcat(path, "/index.html");
-   
-   //S_IXUSR, S_IXGRP, S_IXOTH三者可以参读《TLPI》P295
-  if ((st.st_mode & S_IXUSR) ||       
+
+   //S_IXUSR, S_IXGRP, S_IXOTH三者可以参读《TLPI》
+  if ((st.st_mode & S_IXUSR) ||
       (st.st_mode & S_IXGRP) ||
       (st.st_mode & S_IXOTH)    )
    //如果这个文件是一个可执行文件，不论是属于用户/组/其他这三者类型的，就将 cgi 标志变量置一
    cgi = 1;
-   
+
   if (!cgi)
    //如果不需要 cgi 机制的话，
    serve_file(client, path);
@@ -231,7 +242,7 @@ void cannot_execute(int client)
 void error_die(const char *sc)
 {
  //包含于<stdio.h>,基于当前的 errno 值，在标准错误上产生一条错误消息。参考《TLPI》P49
- perror(sc); 
+ perror(sc);
  exit(1);
 }
 
@@ -253,7 +264,7 @@ void execute_cgi(int client, const char *path,
  char c;
  int numchars = 1;
  int content_length = -1;
- 
+
  //往 buf 中填东西以保证能进入下面的 while
  buf[0] = 'A'; buf[1] = '\0';
  //如果是 http 请求是 GET 方法的话读取并忽略请求剩下的内容
@@ -273,7 +284,7 @@ void execute_cgi(int client, const char *path,
     content_length = atoi(&(buf[16])); //记录 body 的长度大小
    numchars = get_line(client, buf, sizeof(buf));
   }
-  
+
   //如果 http 请求的 header 没有指示 body 长度大小的参数，则报错返回
   if (content_length == -1) {
    bad_request(client);
@@ -284,7 +295,29 @@ void execute_cgi(int client, const char *path,
  sprintf(buf, "HTTP/1.0 200 OK\r\n");
  send(client, buf, strlen(buf), 0);
 
- //下面这里创建两个管道，用于两个进程间通信
+ //下面这里创建两个管道，用于两个进程间通信，参考《TLPI》44.2
+ /*
+ #include <unistd.h>
+ int pipe(int fields); //return 0 on succ, -1 on err.
+ 成功的pipe()调用会在fields中返回两个打开的文件描述符：一个表示管道的读取端（fields[0]），另一个表示写入端（fields[1]）。
+父子进程都通过一个pipe读写信息是可以的，但是很不常见,创建pipe，fork()创建子进程之前：
+   [   parent process  ]
+ - [fields[1] fields[0]]<-
+|                        |
+-> [-------pipe------>]-
+|                       |
+- [fields[1] fields[0]]<-
+  [    sub process   ]
+
+通常fork()后，其中一个进程需要立即关闭管道写入端描述符，另一个关闭读取描述符。关闭未使用描述符之后：
+  [   parent process  ]
+- [fields[1]          ]
+|
+-> [-------pipe------>]-
+                        |
+  [          fields[0]]<-
+[    sub process   ]
+ */
  if (pipe(cgi_output) < 0) {
   cannot_execute(client);
   return;
@@ -293,13 +326,21 @@ void execute_cgi(int client, const char *path,
   cannot_execute(client);
   return;
  }
+ /*
+ cgi_output是子进程（执行cgi的进程）的输出管道，子进程写，父进程读；
+ cgi_input是子进程（执行cgi的进程）的输入管道，父进程写，子进程读。
+ */
 
- //创建一个子进程
+ //创建一个子进程 参考《TLPI》 24.2
+ /*
+ #include <unistd.h>
+ pid_t fork(void); //in parent, return processID of child on success or -1 on error; in successfully created child: always return 0
+ */
  if ( (pid = fork()) < 0 ) {
   cannot_execute(client);
   return;
  }
- 
+
  //子进程用来执行 cgi 脚本
  if (pid == 0)  /* child: CGI script */
  {
@@ -307,21 +348,30 @@ void execute_cgi(int client, const char *path,
   char query_env[255];
   char length_env[255];
 
-  //dup2()包含<unistd.h>中，参读《TLPI》P97
+  //dup2()包含<unistd.h>中，参读《TLPI》5.5
   //将子进程的输出由标准输出重定向到 cgi_ouput 的管道写端上
+  /*
+  #include <unistd.h>
+  int dup2(int oldfd, int newfd); //return (new) file descritor on succ, -1 on err
+  为oldfd指定文件描述符创建副本，其编号由newfd指定。
+  */
   dup2(cgi_output[1], 1);
   //将子进程的输出由标准输入重定向到 cgi_ouput 的管道读端上
   dup2(cgi_input[0], 0);
   //关闭 cgi_ouput 管道的读端与cgi_input 管道的写端
   close(cgi_output[0]);
   close(cgi_input[1]);
-  
+
   //构造一个环境变量
   sprintf(meth_env, "REQUEST_METHOD=%s", method);
-  //putenv()包含于<stdlib.h>中，参读《TLPI》P128
+  //putenv()包含于<stdlib.h>中，参读《TLPI》6.7
   //将这个环境变量加进子进程的运行环境中
+  /*
+  #include <stdlib.h>
+  int putenv(char *string); //return 0 on succ, nonzero on err.
+  */
   putenv(meth_env);
-  
+
   //根据http 请求的不同方法，构造并存储不同的环境变量
   if (strcasecmp(method, "GET") == 0) {
    sprintf(query_env, "QUERY_STRING=%s", query_string);
@@ -331,24 +381,28 @@ void execute_cgi(int client, const char *path,
    sprintf(length_env, "CONTENT_LENGTH=%d", content_length);
    putenv(length_env);
   }
-  
+
   //execl()包含于<unistd.h>中，参读《TLPI》P567
   //最后将子进程替换成另一个进程并执行 cgi 脚本
+  /*
+  #include <unistd.h>
+  int execl(const char* pathname, const char *arg, ...); //not return on succ;return -1 on error.
+  */
   execl(path, path, NULL);
   exit(0);
-  
+
  } else {    /* parent */
   //父进程则关闭了 cgi_output管道的写端和 cgi_input 管道的读端
   close(cgi_output[1]);
   close(cgi_input[0]);
-  
+
   //如果是 POST 方法的话就继续读 body 的内容，并写到 cgi_input 管道里让子进程去读
   if (strcasecmp(method, "POST") == 0)
    for (i = 0; i < content_length; i++) {
     recv(client, &c, 1, 0);
     write(cgi_input[1], &c, 1);
    }
-   
+
   //然后从 cgi_output 管道中读子进程的输出，并发送到客户端去
   while (read(cgi_output[0], &c, 1) > 0)
    send(client, &c, 1, 0);
@@ -356,7 +410,11 @@ void execute_cgi(int client, const char *path,
   //关闭管道
   close(cgi_output[0]);
   close(cgi_input[1]);
-  //等待子进程的退出
+  //等待子进程的退出 《TLPI》26.1.2
+  /*
+  #include <sys/wait.h>
+  pid_t waitpid(pid_t pid, int *status, int options); //return process ID of child, 0, or -1 on err.
+  */
   waitpid(pid, &status, 0);
  }
 }
@@ -382,15 +440,20 @@ int get_line(int sock, char *buf, int size)
 
  while ((i < size - 1) && (c != '\n'))
  {
-  //recv()包含于<sys/socket.h>,参读《TLPI》P1259, 
+  //recv()包含于<sys/socket.h>,参读《TLPI》61.3,
   //读一个字节的数据存放在 c 中
+  /*
+  #include<sys/socket.h>
+  ssize_t recv(int sockfd, void *buffer, size_t length, int flags); //return num of bytes received, 0 on EOF, -1 on err.
+
+  */
   n = recv(sock, &c, 1, 0);
   /* DEBUG printf("%02X\n", c); */
   if (n > 0)
   {
    if (c == '\r')
    {
-    //
+    //MSG_PEEK, 从套接字缓冲区获取一份请求字节副本，但不会将请求的字节从缓冲区中实际移除。
     n = recv(sock, &c, 1, MSG_PEEK);
     /* DEBUG printf("%02X\n", c); */
     if ((n > 0) && (c == '\n'))
@@ -486,7 +549,7 @@ void serve_file(int client, const char *filename)
   //接着把这个文件的内容读出来作为 response 的 body 发送到客户端
   cat(client, resource);
  }
- 
+
  fclose(resource);
 }
 
@@ -501,42 +564,83 @@ void serve_file(int client, const char *filename)
 int startup(u_short *port)
 {
  int httpd = 0;
- //sockaddr_in 是 IPV4的套接字地址结构。定义在<netinet/in.h>,参读《TLPI》P1202
+ //sockaddr_in 是 IPV4的套接字地址结构。定义在<netinet/in.h>,参读《TLPI》P59.4
  struct sockaddr_in name;
- 
- //socket()用于创建一个用于 socket 的描述符，函数包含于<sys/socket.h>。参读《TLPI》P1153
+
+ //socket()用于创建一个用于 socket 的描述符，函数包含于<sys/socket.h>。参读《TLPI》56.2
  //这里的PF_INET其实是与 AF_INET同义，具体可以参读《TLPI》P946
+ /*
+int socket(int domain, int type, int protocol); //return file descriptor on success,-1 on error
+type = SOCK_STREAM -> 流socket 一般使用TCP协议传输
+type = SOCK_DGRAM -> 数据报socket 使用UDP协议传输
+ */
  httpd = socket(PF_INET, SOCK_STREAM, 0);
  if (httpd == -1)
   error_die("socket");
-  
+
  memset(&name, 0, sizeof(name));
  name.sin_family = AF_INET;
- //htons()，ntohs() 和 htonl()包含于<arpa/inet.h>, 参读《TLPI》P1199
+ //htons()，ntohs() 和 htonl()包含于<arpa/inet.h>, 参读《TLPI》P59.2
  //将*port 转换成以网络字节序表示的16位整数
  name.sin_port = htons(*port);
  //INADDR_ANY是一个 IPV4通配地址的常量，包含于<netinet/in.h>
  //大多实现都将其定义成了0.0.0.0 参读《TLPI》P1187
  name.sin_addr.s_addr = htonl(INADDR_ANY);
- 
- //bind()用于绑定地址与 socket。参读《TLPI》P1153
+
+ //bind()用于绑定地址与 socket。参读《TLPI》56.3
  //如果传进去的sockaddr结构中的 sin_port 指定为0，这时系统会选择一个临时的端口号
+ /*
+ int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen); //return 0 on succ, -1 on err.
+ sockfd: sock函数返回的文件描述符
+ 
+ struct sockaddr {
+  sa_family_t sa_family; //address family(AF_* constant)
+  char sa_data[14]; //socket address(size varies according to socket domain)
+  }
+  struct sockaddr_in {
+    so_family_t     sin_family; //address family(AF_INET)
+    in_port_t       sin_port;   //port 16 bytes
+    struct in_addr  sin_addr;   //IVv4 address 32 bytes
+    unsigned char __pad[X];     //pad to size of 'sockaddr' structure(16 bytes)
+  }
+  sin_port + sin_addr -> sa_data[14]
+  每种socket domain都使用了不同的地址格式。Unix domain socket使用路径名；Internet domain socket使用ip地址和端口号。bind适用于所有的socket domain，必须能够接受任意类型地址结构。sockaddr是通用的地址结构。需要将特定domain socket转换为sockaddr。
+ */
  if (bind(httpd, (struct sockaddr *)&name, sizeof(name)) < 0)
   error_die("bind");
-  
+
  //如果调用 bind 后端口号仍然是0，则手动调用getsockname()获取端口号
  if (*port == 0)  /* if dynamically allocating a port */
  {
   int namelen = sizeof(name);
-  //getsockname()包含于<sys/socker.h>中，参读《TLPI》P1263
+  //getsockname()包含于<sys/socker.h>中，参读《TLPI》61.5
   //调用getsockname()获取系统给 httpd 这个 socket 随机分配的端口号
+  /*
+  int getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen); //return 0 on succ, -1 on err.
+  */
   if (getsockname(httpd, (struct sockaddr *)&name, &namelen) == -1)
    error_die("getsockname");
   *port = ntohs(name.sin_port);
  }
- 
- //最初的 BSD socket 实现中，backlog 的上限是5.参读《TLPI》P1156
- if (listen(httpd, 5) < 0) 
+
+ //最初的 BSD socket 实现中，backlog 的上限是5.参读《TLPI》56.5.1
+ /*
+ #include<sys/socket.h>
+ int listen(int sockfd, int backlog);   //return 0 on success, -1 on err.
+ 将文件描述符sockfd引用的流socket标记为被动，这个socket后面会被用来接受来自其它（主动的）socket连接。
+ 如何理解backlog参数？
+ 未决连接请求：
+ 被动socket连接：
+ socket() -> bind() -> listen() -> accept() -><-
+ 主动socket连接：
+ socket() -> connect() //可能阻塞，取决于后台登录的连接请求数量
+
+ 联系：
+ C: connect() --> S: accept()
+
+ 当服务器忙于处理其他客户端时，会先client调用connect(),然后server再accept。内核需要记录这些未决连接请求的相关信息，这样后续accept()才能处理这些请求。backlog为允许这种未决连接的数量。这个限制以内的请求会立即成功。之外的连接请求会阻塞到一个未决的连接被接受（通过accept())。linux中被定义成了128，可以通过/proc/sys/net/core/somaxconn配置。
+ */
+ if (listen(httpd, 5) < 0)
   error_die("listen");
  return(httpd);
 }
@@ -575,7 +679,18 @@ int main(void)
  int server_sock = -1;
  u_short port = 0;
  int client_sock = -1;
- //sockaddr_in 是 IPV4的套接字地址结构。定义在<netinet/in.h>,参读《TLPI》P1202
+ //sockaddr_in 是 IPV4的套接字地址结构。定义在<netinet/in.h>,《TLPI》59.4
+ /*
+ struct in_addr {
+  in_addr_t s_addr; //unsigned 32-bit int
+}
+ struct sockaddr_in {
+  so_family_t     sin_family; //address family(AF_INET)
+  in_port_t       sin_port;   //port 16 bytes
+  struct in_addr  sin_addr;   //IVv4 address 32 bytes
+  unsigned char __pad[X];     //pad to size of 'sockaddr' structure(16 bytes)
+}
+ */
  struct sockaddr_in client_name;
  int client_name_len = sizeof(client_name);
  //pthread_t newthread;
@@ -585,7 +700,14 @@ int main(void)
 
  while (1)
  {
-  //阻塞等待客户端的连接，参读《TLPI》P1157
+  //阻塞等待客户端的连接，如果没有未决连接的话，参读《TLPI》56.5.2
+  /*
+  #include<sys/socket.h>
+  int accept(int sockfd, struct sockaddr *addr, socklen_t addrlen); //return file descriptor on succ, -1 on err.
+  它会创建一个新的socket，正是这个socket与执行connect()的对等socket进行连接。
+  socket(sockfd)会保持打开状态，并可用于接受后续的连接。
+  accept4(): 新添参数flags, SOCK_CLOSEEXEC-内核在调用返回的新文件描述符上启用close-on-exec标记 SOCK_NONBLOCK-内核在底层打开着的文件描述上启用O_NONBLOCK标记，后续I/O操作变成非阻塞,无需调用fcntl()获得同样效果。
+  */
   client_sock = accept(server_sock,
                        (struct sockaddr *)&client_name,
                        &client_name_len);
@@ -596,6 +718,9 @@ int main(void)
    perror("pthread_create");*/
  }
 
+ /*
+ 如果多个文件描述符引用了一个socket，那么当所有文件描述符被关闭后连接就会被终止。
+ */
  close(server_sock);
 
  return(0);

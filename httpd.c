@@ -17,7 +17,7 @@
      代码中除了用到 C 语言标准库的一些函数，也用到了一些与环境有关的函数(例如POSIX标准)
      具体可以参读《The Linux Programming Interface》，以下简称《TLPI》，页码指示均为英文版
 
-     注释者： github: cbsheng
+     注释者： github: cbsheng & github: conndots
  */
 #include <stdio.h>
 #include <sys/socket.h>

@@ -17,6 +17,7 @@ Pipe是Unix like系统上最古老的IPC方法。它为一个常见需求提供�
 
 tinyhttpd中创建子进程来执行cgi脚本的函数可以很好地用来学习pipe。  
 先来看代码。  
+
 ```c
 /**********************************************************************/
 /* Execute a CGI script.  Will need to set environment variables as
@@ -161,7 +162,9 @@ void execute_cgi(int client, const char *path, const char *method, const char *q
   waitpid(pid, &status, 0);
  }
 }
-```  
+```   
+
+
 这段代码很简单，创建了一个子进程用于执行CGI脚本。子进程将标准输入重定向到管道cgi_input的输入，接受来自父进程的写入；将标准输出重定向到cgi_output的输入，将信息发给父进程。子进程通过execl执行cgi脚本替换当前子进程。如下图：  
 ![tinyhttpd_pipe](http://7xiub6.com1.z0.glb.clouddn.com/tinyhttpd_pipe.png)
 
